@@ -789,6 +789,37 @@
   </div>
 </div>
 
+<!-- 수정 모달 -->
+<div id="editModal" class="modal-overlay hidden" onclick="closeEditModal(event)">
+  <div class="modal">
+    <div class="modal-title">거래내역 수정</div>
+    <div class="type-toggle" style="margin-bottom:16px;">
+      <button class="type-btn" id="editBtnExpense" onclick="setEditType('지출')">지출</button>
+      <button class="type-btn" id="editBtnIncome" onclick="setEditType('수입')">수입</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">날짜</label>
+      <input type="date" class="form-input" id="editDate">
+    </div>
+    <div class="form-group">
+      <label class="form-label">금액</label>
+      <div class="amount-wrapper">
+        <span class="amount-prefix">₩</span>
+        <input type="number" class="form-input amount-input" id="editAmount" placeholder="0" inputmode="numeric">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">카테고리</label>
+      <div class="cat-grid" id="editCatGrid"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">메모</label>
+      <input type="text" class="form-input" id="editMemo" placeholder="메모">
+    </div>
+    <button class="submit-btn" id="editSubmitBtn" onclick="submitEdit()" style="background:var(--accent2);color:white;">수정 완료</button>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -891,7 +922,8 @@ async function loadTransactions() {
   el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
     const data = await apiGet({ action: 'getTransactions', yearMonth: currentYM });
-    renderTransactions(data.transactions || []);
+    window._allTransactions = data.transactions || [];
+    renderTransactions(window._allTransactions);
   } catch(e) {
     el.innerHTML = '<div class="empty-state"><div class="empty-text">데이터를 불러올 수 없습니다</div></div>';
   }
@@ -965,8 +997,9 @@ function renderTransactions(txs) {
     items.forEach(tx => {
       const isIncome = tx.type === '수입';
       const icon = catMap[tx.category] || (isIncome ? '💰' : '💸');
+      const txJson = JSON.stringify(tx).replace(/'/g, '&#39;');
       html += `
-        <div class="tx-item">
+        <div class="tx-item" onclick="openEditModal('${tx.id}')" style="cursor:pointer;">
           <div class="tx-icon">${icon}</div>
           <div class="tx-info">
             <div class="tx-category">${tx.category}</div>
@@ -976,8 +1009,9 @@ function renderTransactions(txs) {
             <div class="tx-amount ${isIncome ? 'income' : 'expense'}">
               ${isIncome ? '+' : '-'}${fmt(tx.amount)}원
             </div>
+            <div class="tx-date" style="font-size:10px;color:var(--text3);margin-top:2px;">✏️ 탭하여 수정</div>
           </div>
-          <button class="tx-delete" onclick="deleteItem('${tx.id}')">✕</button>
+          <button class="tx-delete" onclick="event.stopPropagation();deleteItem('${tx.id}')">✕</button>
         </div>`;
     });
   });
@@ -1125,6 +1159,99 @@ async function deleteItem(id) {
       loadAll();
     }
   } catch(e) { showToast('삭제 실패'); }
+}
+
+// ── 수정 모달 ────────────────────────────────────────────────
+let editingTx = null;
+let editSelectedType = '지출';
+let editSelectedCategory = '';
+
+function openEditModal(id) {
+  // 현재 로드된 거래내역에서 찾기
+  const allTx = window._allTransactions || [];
+  const tx = allTx.find(t => t.id === id);
+  if (!tx) { showToast('항목을 찾을 수 없습니다'); return; }
+
+  editingTx = tx;
+  editSelectedType = tx.type;
+  editSelectedCategory = tx.category;
+
+  document.getElementById('editDate').value = tx.date;
+  document.getElementById('editAmount').value = tx.amount;
+  document.getElementById('editMemo').value = tx.memo || '';
+
+  // 타입 버튼
+  setEditType(tx.type);
+
+  document.getElementById('editModal').classList.remove('hidden');
+}
+
+function closeEditModal(e) {
+  if (e.target.id === 'editModal') {
+    document.getElementById('editModal').classList.add('hidden');
+  }
+}
+
+function setEditType(type) {
+  editSelectedType = type;
+  editSelectedCategory = '';
+  document.getElementById('editBtnExpense').className = 'type-btn' + (type === '지출' ? ' active-expense' : '');
+  document.getElementById('editBtnIncome').className = 'type-btn' + (type === '수입' ? ' active-income' : '');
+  renderEditCatGrid();
+}
+
+function renderEditCatGrid() {
+  const grid = document.getElementById('editCatGrid');
+  const filtered = categories.filter(c => c.type === editSelectedType);
+  grid.innerHTML = filtered.map(c => `
+    <button class="cat-pick-btn ${editSelectedCategory === c.name ? 'selected' : ''}"
+      onclick="editSelectCategory('${c.name}')">
+      <span class="cat-pick-icon">${String(c.icon || '')}</span>
+      <span class="cat-pick-name">${c.name}</span>
+    </button>
+  `).join('');
+}
+
+function editSelectCategory(name) {
+  editSelectedCategory = name;
+  renderEditCatGrid();
+}
+
+async function submitEdit() {
+  const date = document.getElementById('editDate').value;
+  const amount = parseInt(document.getElementById('editAmount').value);
+  const memo = document.getElementById('editMemo').value;
+
+  if (!date) { showToast('날짜를 선택해주세요'); return; }
+  if (!amount || amount <= 0) { showToast('금액을 입력해주세요'); return; }
+  if (!editSelectedCategory) { showToast('카테고리를 선택해주세요'); return; }
+
+  const btn = document.getElementById('editSubmitBtn');
+  btn.textContent = '저장 중...';
+  btn.disabled = true;
+
+  try {
+    const result = await apiPost({
+      action: 'updateTransaction',
+      id: editingTx.id,
+      date, type: editSelectedType,
+      category: editSelectedCategory,
+      amount, memo
+    });
+
+    if (result.success) {
+      showToast('✅ 수정했습니다!');
+      document.getElementById('editModal').classList.add('hidden');
+      loadAll();
+    } else {
+      showToast('❌ 오류: ' + (result.error || '수정 실패'));
+    }
+  } catch(e) {
+    showToast('❌ 연결 오류');
+  }
+
+  btn.textContent = '수정 완료';
+  btn.disabled = false;
 }
 
 // ── 목표 설정 ────────────────────────────────────────────────
