@@ -682,19 +682,9 @@
         <div class="summary-value expense" id="totalExpense">-</div>
       </div>
     </div>
-    <div class="summary-item" style="margin-bottom:14px;">
+    <div class="summary-item">
       <div class="summary-label">잔액</div>
       <div class="summary-value balance" id="totalBalance">-</div>
-    </div>
-    <div class="goal-section">
-      <div class="goal-header">
-        <span class="goal-label" id="goalLabel">목표 미설정</span>
-        <span class="goal-remaining" id="goalRemaining"></span>
-      </div>
-      <div class="progress-bar">
-        <div class="progress-fill ok" id="progressFill" style="width:0%"></div>
-      </div>
-      <button class="goal-set-btn" onclick="openGoalModal()">목표 금액 설정 →</button>
     </div>
   </div>
 
@@ -713,7 +703,17 @@
 
   <!-- ── 분석 탭 ── -->
   <div id="tabAnalysis" class="section hidden">
-    <div class="section-title">카테고리별 지출</div>
+    <div class="summary-row" style="margin-bottom:16px;">
+      <div class="summary-item">
+        <div class="summary-label">총 지출</div>
+        <div class="summary-value expense" id="anaTotalExpense">-</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">총 목표</div>
+        <div class="summary-value" id="anaTotalGoal" style="color:var(--goal)">-</div>
+      </div>
+    </div>
+    <div class="section-title">카테고리별 목표 대비 실적</div>
     <div id="catBreakdown" class="cat-list"></div>
   </div>
 
@@ -948,23 +948,7 @@ function renderSummary(s) {
   balEl.textContent = `${bal >= 0 ? '+' : ''}${fmt(bal)}원`;
   balEl.style.color = bal >= 0 ? 'var(--income)' : 'var(--expense)';
 
-  const goalEl = document.getElementById('goalLabel');
-  const remEl = document.getElementById('goalRemaining');
-  const barEl = document.getElementById('progressFill');
 
-  if (s.goal > 0) {
-    const pct = Math.min((s.expense / s.goal) * 100, 100);
-    const rem = s.goal - s.expense;
-    goalEl.textContent = `지출 목표 ${fmt(s.goal)}원`;
-    remEl.textContent = rem >= 0 ? `잔여 ${fmt(rem)}원` : `초과 ${fmt(-rem)}원`;
-    remEl.className = 'goal-remaining ' + (rem >= 0 ? 'ok' : 'over');
-    barEl.style.width = pct + '%';
-    barEl.className = 'progress-fill ' + (pct < 70 ? 'ok' : pct < 90 ? 'warn' : 'over');
-  } else {
-    goalEl.textContent = '목표 미설정';
-    remEl.textContent = '';
-    barEl.style.width = '0%';
-  }
 }
 
 function renderTransactions(txs) {
@@ -1033,26 +1017,55 @@ function renderAnalysis() {
   if (!summary) return;
   const el = document.getElementById('catBreakdown');
   const breakdown = summary.categoryBreakdown || [];
+  const goalMap = summary.goalMap || {};
+
+  // 상단 요약
+  document.getElementById('anaTotalExpense').textContent = fmt(summary.expense) + '원';
+  if (summary.goal > 0) {
+    document.getElementById('anaTotalGoal').textContent = fmt(summary.goal) + '원';
+  } else {
+    document.getElementById('anaTotalGoal').textContent = '미설정';
+  }
 
   if (!breakdown.length) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text">지출 내역이 없어요</div></div>`;
+    el.innerHTML = `<div class="empty-state"><div class="empty-text">지출 내역이 없어요</div></div>`;
     return;
   }
 
-  const max = breakdown[0].amount;
   el.innerHTML = breakdown.map(c => {
-    const pct = max > 0 ? Math.round((c.amount / max) * 100) : 0;
+    const goal = c.goal || goalMap[c.name] || 0;
+    const hasGoal = goal > 0;
+    const usedPct = hasGoal ? Math.min(Math.round((c.amount / goal) * 100), 100) : 0;
+    const overBudget = hasGoal && c.amount > goal;
+    const remaining = goal - c.amount;
     const totalPct = summary.expense > 0 ? Math.round((c.amount / summary.expense) * 100) : 0;
+
+    // 바 색상
+    const barClass = !hasGoal ? 'ok' : (usedPct < 70 ? 'ok' : usedPct < 90 ? 'warn' : 'over');
+    // 목표 없으면 지출 비중으로 바 표시
+    const barWidth = hasGoal ? usedPct : totalPct;
+
     return `
       <div class="cat-item">
         <div class="cat-row">
-          <span class="cat-name">${c.name}</span>
+          <span class="cat-name" style="font-weight:600;">${c.name}</span>
           <span class="cat-amount">${fmt(c.amount)}원</span>
         </div>
-        <div class="cat-bar-bg">
-          <div class="cat-bar-fill" style="width:${pct}%"></div>
+        ${hasGoal ? `
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:6px;">
+          <span>목표 ${fmt(goal)}원</span>
+          <span style="color:${overBudget ? 'var(--expense)' : 'var(--income)'};">
+            ${overBudget ? '초과 ' + fmt(-remaining) + '원' : '잔여 ' + fmt(remaining) + '원'}
+          </span>
+        </div>` : `
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px;">목표 미설정</div>`}
+        <div class="progress-bar" style="height:10px;">
+          <div class="progress-fill ${barClass}" style="width:${barWidth}%;border-radius:5px;"></div>
         </div>
-        <div class="cat-pct">전체 지출의 ${totalPct}%</div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-top:4px;">
+          <span>전체 지출의 ${totalPct}%</span>
+          ${hasGoal ? `<span>${usedPct}% 사용</span>` : ''}
+        </div>
       </div>`;
   }).join('');
 }
