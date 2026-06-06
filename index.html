@@ -458,9 +458,8 @@
     padding: 10px 6px;
     cursor: pointer;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
     transition: all 0.15s;
   }
 
@@ -470,8 +469,7 @@
     color: var(--accent);
   }
 
-  .cat-pick-icon { font-size: 20px; }
-  .cat-pick-name { font-size: 11px; }
+  .cat-pick-name { font-size: 12px; font-weight: 500; }
 
   /* 제출 버튼 */
   .submit-btn {
@@ -996,11 +994,10 @@ function renderTransactions(txs) {
     html += `<div class="section-title" style="margin-top:8px;margin-bottom:6px;">${date}</div>`;
     items.forEach(tx => {
       const isIncome = tx.type === '수입';
-      const icon = catMap[tx.category] || (isIncome ? '💰' : '💸');
+      const icon = '';
       const txJson = JSON.stringify(tx).replace(/'/g, '&#39;');
       html += `
         <div class="tx-item" onclick="openEditModal('${tx.id}')" style="cursor:pointer;">
-          <div class="tx-icon">${icon}</div>
           <div class="tx-info">
             <div class="tx-category">${tx.category}</div>
             <div class="tx-meta">${tx.memo || tx.type}</div>
@@ -1025,7 +1022,6 @@ function renderCatGrid() {
   grid.innerHTML = filtered.map(c => `
     <button class="cat-pick-btn ${selectedCategory === c.name ? 'selected' : ''}"
       onclick="selectCategory('${c.name}')">
-      <span class="cat-pick-icon">${c.icon}</span>
       <span class="cat-pick-name">${c.name}</span>
     </button>
   `).join('');
@@ -1206,7 +1202,6 @@ function renderEditCatGrid() {
   grid.innerHTML = filtered.map(c => `
     <button class="cat-pick-btn ${editSelectedCategory === c.name ? 'selected' : ''}"
       onclick="editSelectCategory('${c.name}')">
-      <span class="cat-pick-icon">${String(c.icon || '')}</span>
       <span class="cat-pick-name">${c.name}</span>
     </button>
   `).join('');
