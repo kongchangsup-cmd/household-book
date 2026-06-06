@@ -948,7 +948,7 @@ function renderTransactions(txs) {
   }
 
   const catMap = {};
-  categories.forEach(c => { catMap[c.name] = c.icon; });
+  categories.forEach(c => { catMap[c.name] = String(c.icon || ''); });
 
   // 날짜별 그룹
   const groups = {};
