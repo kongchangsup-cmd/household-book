@@ -672,7 +672,10 @@
   <div class="header">
     <div class="header-top">
       <div class="app-title">📒 가계부</div>
-      <button onclick="showSettings()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;">⚙️</button>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button onclick="openAccountModal()" title="계좌 관리" style="background:none;border:none;color:var(--text2);font-size:19px;cursor:pointer;">💳</button>
+        <button onclick="showSettings()" title="API 설정" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;">⚙️</button>
+      </div>
     </div>
     <div class="month-nav">
       <button onclick="changeMonth(-1)">‹</button>
@@ -747,6 +750,16 @@
         <div class="summary-value" id="anaTotalGoal" style="color:var(--goal)">-</div>
       </div>
     </div>
+    <div class="summary-row" style="margin-bottom:16px;">
+      <div class="summary-item">
+        <div class="summary-label">일평균 지출</div>
+        <div class="summary-value expense" id="anaAvgExpense">-</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">최다 지출</div>
+        <div class="summary-value" id="anaTopCategory" style="color:var(--accent);font-size:14px;">-</div>
+      </div>
+    </div>
     <div class="section-title">카테고리별 목표 대비 실적</div>
     <div id="catBreakdown" class="cat-list"></div>
   </div>
@@ -787,6 +800,27 @@
       <div class="form-group">
         <label class="form-label">카테고리</label>
         <div class="cat-grid" id="catGrid"></div>
+      </div>
+
+      <!-- 결제수단 -->
+      <div class="form-group">
+        <label class="form-label">결제수단 (선택)</label>
+        <select class="form-select" id="inputPaymentMethod">
+          <option value="">선택 안 함</option>
+          <option value="현금">현금</option>
+          <option value="신용카드">신용카드</option>
+          <option value="체크카드">체크카드</option>
+          <option value="계좌이체">계좌이체</option>
+          <option value="기타">기타</option>
+        </select>
+      </div>
+
+      <!-- 계좌 -->
+      <div class="form-group">
+        <label class="form-label">계좌 / 카드 (선택)</label>
+        <select class="form-select" id="inputAccount">
+          <option value="">선택 안 함</option>
+        </select>
       </div>
 
       <!-- 메모 -->
@@ -845,10 +879,60 @@
       <div class="cat-grid" id="editCatGrid"></div>
     </div>
     <div class="form-group">
+      <label class="form-label">결제수단</label>
+      <select class="form-select" id="editPaymentMethod">
+        <option value="">선택 안 함</option>
+        <option value="현금">현금</option>
+        <option value="신용카드">신용카드</option>
+        <option value="체크카드">체크카드</option>
+        <option value="계좌이체">계좌이체</option>
+        <option value="기타">기타</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">계좌 / 카드</label>
+      <select class="form-select" id="editAccount">
+        <option value="">선택 안 함</option>
+      </select>
+    </div>
+    <div class="form-group">
       <label class="form-label">메모</label>
       <input type="text" class="form-input" id="editMemo" placeholder="메모">
     </div>
     <button class="submit-btn" id="editSubmitBtn" onclick="submitEdit()" style="background:var(--accent2);color:white;">수정 완료</button>
+  </div>
+</div>
+
+<!-- 계좌 관리 모달 -->
+<div id="accountModal" class="modal-overlay hidden" onclick="closeAccountModal(event)">
+  <div class="modal">
+    <div class="modal-title">계좌 / 카드 관리</div>
+
+    <div id="accountList" class="cat-list" style="margin-bottom:16px;"></div>
+
+    <div class="form-group">
+      <label class="form-label">계좌명</label>
+      <input type="text" class="form-input" id="accountName" placeholder="예: 국민은행 생활비">
+    </div>
+    <div class="form-group">
+      <label class="form-label">종류</label>
+      <select class="form-select" id="accountType">
+        <option value="은행계좌">은행계좌</option>
+        <option value="증권계좌">증권계좌</option>
+        <option value="신용카드">신용카드</option>
+        <option value="체크카드">체크카드</option>
+        <option value="현금">현금</option>
+        <option value="기타">기타</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">초기잔액</label>
+      <div class="amount-wrapper">
+        <span class="amount-prefix">₩</span>
+        <input type="number" class="form-input amount-input" id="accountInitialBalance" placeholder="0" inputmode="numeric">
+      </div>
+    </div>
+    <button class="submit-btn" onclick="saveAccount()" style="background:var(--accent2);color:white;">계좌 추가</button>
   </div>
 </div>
 
@@ -865,6 +949,7 @@ let selectedType = '지출';
 let selectedCategory = '';
 let summary = null;
 let txTypeFilter = '전체';
+let accounts = [];
 
 // ── 초기화 ───────────────────────────────────────────────────
 function init() {
@@ -914,7 +999,7 @@ function changeMonth(delta) {
 
 // ── 데이터 로드 ──────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadSummary(), loadTransactions(), loadCategories()]);
+  await Promise.all([loadSummary(), loadTransactions(), loadCategories(), loadAccounts()]);
 }
 
 async function fetchWithTimeout(url, options = {}, timeout = 15000) {
@@ -982,6 +1067,92 @@ async function loadCategories() {
     updateCategoryFilter();
     if (window._allTransactions) renderTransactions(getFilteredTransactions());
   } catch(e) { console.error('카테고리 로드 오류', e); }
+}
+
+async function loadAccounts() {
+  try {
+    const data = await apiGet({ action: 'getAccounts' });
+    accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    renderAccountSelects();
+    renderAccountList();
+  } catch(e) {
+    console.error('계좌 로드 오류', e);
+    accounts = [];
+    renderAccountSelects();
+    renderAccountList();
+  }
+}
+
+function renderAccountSelects() {
+  ['inputAccount', 'editAccount'].forEach(id => {
+    const select = document.getElementById(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">선택 안 함</option>' +
+      accounts.filter(a => a.active !== false).map(a =>
+        `<option value="${escapeHTML(a.name)}">${escapeHTML(a.name)}${a.type ? ' · ' + escapeHTML(a.type) : ''}</option>`
+      ).join('');
+    if (accounts.some(a => a.name === current && a.active !== false)) select.value = current;
+  });
+}
+
+function renderAccountList() {
+  const el = document.getElementById('accountList');
+  if (!el) return;
+  if (!accounts.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 10px;"><div class="empty-text">등록된 계좌가 없습니다.</div></div>';
+    return;
+  }
+  el.innerHTML = accounts.map(a => `
+    <div class="cat-item" style="padding:12px;">
+      <div class="cat-row" style="margin-bottom:4px;">
+        <span class="cat-name">${escapeHTML(a.name)}</span>
+        <span class="cat-amount" style="color:${a.currentBalance >= 0 ? 'var(--income)' : 'var(--expense)'};">
+          ${fmt(a.currentBalance)}원
+        </span>
+      </div>
+      <div style="font-size:11px;color:var(--text3);display:flex;justify-content:space-between;">
+        <span>${escapeHTML(a.type || '기타')}${a.active === false ? ' · 사용중지' : ''}</span>
+        <button class="filter-btn" onclick="deleteAccountItem(decodeURIComponent('${encodeURIComponent(a.name)}'))">삭제/중지</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openAccountModal() {
+  document.getElementById('accountModal').classList.remove('hidden');
+  loadAccounts();
+}
+
+function closeAccountModal(e) {
+  if (e.target.id === 'accountModal') document.getElementById('accountModal').classList.add('hidden');
+}
+
+async function saveAccount() {
+  const name = document.getElementById('accountName').value.trim();
+  const type = document.getElementById('accountType').value;
+  const initialBalance = Number(document.getElementById('accountInitialBalance').value || 0);
+  if (!name) { showToast('계좌명을 입력해주세요'); return; }
+
+  try {
+    const result = await apiPost({ action:'addAccount', name, type, initialBalance, active:true });
+    if (!result.success) { showToast('❌ ' + (result.error || '계좌 추가 실패')); return; }
+    document.getElementById('accountName').value = '';
+    document.getElementById('accountInitialBalance').value = '';
+    showToast('✅ 계좌가 추가되었습니다');
+    await loadAccounts();
+  } catch(e) {
+    showToast('❌ 계좌 저장 실패');
+  }
+}
+
+async function deleteAccountItem(name) {
+  if (!confirm(`"${name}" 계좌를 삭제/중지할까요?`)) return;
+  try {
+    const result = await apiPost({ action:'deleteAccount', name });
+    showToast(result.success ? (result.disabled ? '사용중지 처리했습니다' : '삭제했습니다') : ('❌ ' + (result.error || '처리 실패')));
+    await loadAccounts();
+  } catch(e) { showToast('❌ 계좌 처리 실패'); }
 }
 
 // ── 렌더링 ───────────────────────────────────────────────────
@@ -1092,7 +1263,7 @@ function renderTransactions(txs) {
           <div class="tx-icon">${escapeHTML(icon)}</div>
           <div class="tx-info">
             <div class="tx-category">${escapeHTML(tx.category)}</div>
-            <div class="tx-meta">${escapeHTML(tx.memo || tx.type)}</div>
+            <div class="tx-meta">${escapeHTML([tx.memo, tx.paymentMethod, tx.account].filter(Boolean).join(' · ') || tx.type)}</div>
           </div>
           <div class="tx-right">
             <div class="tx-amount ${isIncome ? 'income' : 'expense'}">${isIncome ? '+' : '-'}${fmt(tx.amount)}원</div>
@@ -1126,6 +1297,10 @@ function renderAnalysis() {
 
   // 상단 요약
   document.getElementById('anaTotalExpense').textContent = fmt(summary.expense) + '원';
+  document.getElementById('anaAvgExpense').textContent = fmt(summary.avgDailyExpense || 0) + '원';
+  document.getElementById('anaTopCategory').textContent = summary.topCategory
+    ? `${summary.topCategory.name} · ${fmt(summary.topCategory.amount)}원`
+    : '없음';
   if (summary.goal > 0) {
     document.getElementById('anaTotalGoal').textContent = fmt(summary.goal) + '원';
   } else {
@@ -1224,6 +1399,8 @@ function initForm() {
   document.getElementById('inputDate').value = `${y}-${m}-${d}`;
   document.getElementById('inputAmount').value = '';
   document.getElementById('inputMemo').value = '';
+  document.getElementById('inputPaymentMethod').value = '';
+  document.getElementById('inputAccount').value = '';
   selectedCategory = '';
   renderCatGrid();
 }
@@ -1232,6 +1409,8 @@ async function submitTransaction() {
   const date = document.getElementById('inputDate').value;
   const amount = parseInt(document.getElementById('inputAmount').value);
   const memo = document.getElementById('inputMemo').value;
+  const paymentMethod = document.getElementById('inputPaymentMethod').value;
+  const account = document.getElementById('inputAccount').value;
 
   if (!date) { showToast('날짜를 선택해주세요'); return; }
   if (!amount || amount <= 0) { showToast('금액을 입력해주세요'); return; }
@@ -1245,7 +1424,7 @@ async function submitTransaction() {
     const result = await apiPost({
       action: 'addTransaction',
       date, type: selectedType, category: selectedCategory,
-      amount, memo
+      amount, memo, paymentMethod, account
     });
 
     if (result.success) {
@@ -1292,6 +1471,9 @@ function openEditModal(id) {
   document.getElementById('editDate').value = String(tx.date).slice(0, 10);
   document.getElementById('editAmount').value = tx.amount;
   document.getElementById('editMemo').value = tx.memo || '';
+  document.getElementById('editPaymentMethod').value = tx.paymentMethod || '';
+  renderAccountSelects();
+  document.getElementById('editAccount').value = tx.account || '';
 
   setEditType(tx.type);
   editSelectedCategory = tx.category;
@@ -1334,6 +1516,8 @@ async function submitEdit() {
   const date = document.getElementById('editDate').value;
   const amount = parseInt(document.getElementById('editAmount').value);
   const memo = document.getElementById('editMemo').value;
+  const paymentMethod = document.getElementById('editPaymentMethod').value;
+  const account = document.getElementById('editAccount').value;
 
   if (!date) { showToast('날짜를 선택해주세요'); return; }
   if (!amount || amount <= 0) { showToast('금액을 입력해주세요'); return; }
@@ -1349,7 +1533,7 @@ async function submitEdit() {
       id: editingTx.id,
       date, type: editSelectedType,
       category: editSelectedCategory,
-      amount, memo
+      amount, memo, paymentMethod, account
     });
 
     if (result.success) {
@@ -1411,8 +1595,8 @@ function exportCurrentMonthCSV() {
   const txs = getFilteredTransactions();
   if (!txs.length) { showToast('내보낼 내역이 없습니다'); return; }
   const rows = [
-    ['날짜','구분','카테고리','금액','메모'],
-    ...txs.map(t => [t.date, t.type, t.category, Number(t.amount) || 0, t.memo || ''])
+    ['날짜','구분','카테고리','금액','결제수단','계좌','메모'],
+    ...txs.map(t => [t.date, t.type, t.category, Number(t.amount) || 0, t.paymentMethod || '', t.account || '', t.memo || ''])
   ];
   const csv = '\\uFEFF' + rows.map(row =>
     row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
