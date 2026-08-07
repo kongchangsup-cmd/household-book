@@ -616,6 +616,17 @@
     cursor: pointer;
   }
 
+  .list-tools { margin-bottom: 14px; }
+  .list-tools .form-input { font-size: 14px; padding: 10px 12px; }
+  .filter-row { display:flex; gap:6px; margin-top:8px; align-items:center; }
+  .filter-btn {
+    background:var(--bg3); border:1px solid var(--border); color:var(--text2);
+    border-radius:8px; padding:8px 10px; font-size:11px; cursor:pointer; white-space:nowrap;
+  }
+  .filter-btn.active { color:var(--accent); border-color:var(--accent); background:rgba(129,140,248,.12); }
+  #txCategoryFilter { flex:1; min-width:0; padding:8px 10px; font-size:11px; }
+  .tx-item { position:relative; }
+  .tx-item:active { transform:scale(.995); }
   .hidden { display: none !important; }
 
   /* toast */
@@ -686,6 +697,16 @@
       <div class="summary-label">잔액</div>
       <div class="summary-value balance" id="totalBalance">-</div>
     </div>
+    <div class="goal-section">
+      <div class="goal-header">
+        <span class="goal-label">이번 달 지출 목표</span>
+        <span class="goal-remaining" id="goalStatus">미설정</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill ok" id="goalProgress" style="width:0%"></div>
+      </div>
+      <button class="goal-set-btn" onclick="openGoalModal()">지출 목표 설정/변경</button>
+    </div>
   </div>
 
   <!-- 탭 네비 -->
@@ -698,6 +719,19 @@
   <!-- ── 거래 목록 탭 ── -->
   <div id="tabList" class="section">
     <div class="section-title">이번 달 거래</div>
+    <div class="list-tools">
+      <input id="txSearch" class="form-input" type="search"
+        placeholder="🔎 카테고리·메모 검색" oninput="applyTxFilters()">
+      <div class="filter-row">
+        <button class="filter-btn active" id="filterAll" onclick="setTxTypeFilter('전체')">전체</button>
+        <button class="filter-btn" id="filterExpense" onclick="setTxTypeFilter('지출')">지출</button>
+        <button class="filter-btn" id="filterIncome" onclick="setTxTypeFilter('수입')">수입</button>
+        <select id="txCategoryFilter" class="form-select" onchange="applyTxFilters()">
+          <option value="">모든 카테고리</option>
+        </select>
+        <button class="filter-btn" onclick="exportCurrentMonthCSV()">CSV</button>
+      </div>
+    </div>
     <div id="txList" class="tx-list"></div>
   </div>
 
@@ -830,6 +864,7 @@ let categories = [];
 let selectedType = '지출';
 let selectedCategory = '';
 let summary = null;
+let txTypeFilter = '전체';
 
 // ── 초기화 ───────────────────────────────────────────────────
 function init() {
@@ -846,7 +881,7 @@ function init() {
 
 function saveApiUrl() {
   const url = document.getElementById('apiUrlInput').value.trim();
-  if (!url.startsWith('https://')) { showToast('올바른 URL을 입력해주세요'); return; }
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^\s]+\/exec(?:\?.*)?$/.test(url)) { showToast('Google Apps Script 웹 앱 URL을 확인해주세요'); return; }
   API_URL = url;
   localStorage.setItem('가계부_apiUrl', url);
   // 시트 초기화
@@ -873,6 +908,7 @@ function updateMonthLabel() {
 function changeMonth(delta) {
   currentDate.setMonth(currentDate.getMonth() + delta);
   updateMonthLabel();
+  resetListFilters();
   loadAll();
 }
 
@@ -881,30 +917,39 @@ async function loadAll() {
   await Promise.all([loadSummary(), loadTransactions(), loadCategories()]);
 }
 
-async function apiGet(params) {
-  const qs = new URLSearchParams(params).toString();
-  // Apps Script는 POST로 파라미터를 body에 담아 보내야 리다이렉트 시 유지됨
-  // GET 대신 파라미터를 포함한 URL을 직접 호출 (redirect follow)
-  const res = await fetch(`${API_URL}?${qs}`, {
-    redirect: 'follow',
-    method: 'GET',
-  });
+async function fetchWithTimeout(url, options = {}, timeout = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try { return await fetch(url, { ...options, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+
+async function parseApiResponse(res) {
   const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 150)}`);
   try { return JSON.parse(text); }
-  catch { throw new Error('응답 파싱 오류: ' + text.slice(0, 100)); }
+  catch { throw new Error('응답 파싱 오류: ' + text.slice(0, 150)); }
+}
+
+async function apiGet(params) {
+  if (!API_URL) throw new Error('API URL이 설정되지 않았습니다.');
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetchWithTimeout(`${API_URL}?${qs}`, {
+    redirect: 'follow', method: 'GET',
+    headers: { 'Accept': 'application/json' }
+  });
+  return parseApiResponse(res);
 }
 
 async function apiPost(body) {
-  // Apps Script POST도 파라미터를 queryString으로 전달
+  if (!API_URL) throw new Error('API URL이 설정되지 않았습니다.');
   const action = body.action;
-  const res = await fetch(`${API_URL}?action=${action}`, {
-    method: 'POST',
-    redirect: 'follow',
-    body: JSON.stringify(body),
+  const res = await fetchWithTimeout(`${API_URL}?action=${encodeURIComponent(action)}`, {
+    method: 'POST', redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8', 'Accept': 'application/json' },
+    body: JSON.stringify(body)
   });
-  const text = await res.text();
-  try { return JSON.parse(text); }
-  catch { throw new Error('응답 파싱 오류: ' + text.slice(0, 100)); }
+  return parseApiResponse(res);
 }
 
 async function loadSummary() {
@@ -920,10 +965,12 @@ async function loadTransactions() {
   el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
     const data = await apiGet({ action: 'getTransactions', yearMonth: currentYM });
-    window._allTransactions = data.transactions || [];
-    renderTransactions(window._allTransactions);
+    window._allTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+    updateCategoryFilter();
+    renderTransactions(getFilteredTransactions());
   } catch(e) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-text">데이터를 불러올 수 없습니다</div></div>';
+    console.error('거래내역 로드 오류', e);
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-text">데이터를 불러올 수 없습니다<br><small>API URL과 Apps Script 배포 상태를 확인하세요.</small></div></div>';
   }
 }
 
@@ -932,7 +979,9 @@ async function loadCategories() {
     const data = await apiGet({ action: 'getCategories' });
     categories = data.categories || [];
     renderCatGrid();
-  } catch(e) {}
+    updateCategoryFilter();
+    if (window._allTransactions) renderTransactions(getFilteredTransactions());
+  } catch(e) { console.error('카테고리 로드 오류', e); }
 }
 
 // ── 렌더링 ───────────────────────────────────────────────────
@@ -941,14 +990,76 @@ function fmt(n) {
 }
 
 function renderSummary(s) {
-  document.getElementById('totalIncome').textContent = `+${fmt(s.income)}원`;
-  document.getElementById('totalExpense').textContent = `-${fmt(s.expense)}원`;
-  const bal = s.income - s.expense;
+  const income = Number(s.income) || 0;
+  const expense = Number(s.expense) || 0;
+  document.getElementById('totalIncome').textContent = `+${fmt(income)}원`;
+  document.getElementById('totalExpense').textContent = `-${fmt(expense)}원`;
+
+  const bal = income - expense;
   const balEl = document.getElementById('totalBalance');
   balEl.textContent = `${bal >= 0 ? '+' : ''}${fmt(bal)}원`;
   balEl.style.color = bal >= 0 ? 'var(--income)' : 'var(--expense)';
 
+  const goal = Number(s.goal) || 0;
+  const status = document.getElementById('goalStatus');
+  const progress = document.getElementById('goalProgress');
+  if (!goal) {
+    status.textContent = '미설정';
+    status.className = 'goal-remaining';
+    progress.style.width = '0%';
+    progress.className = 'progress-fill ok';
+  } else {
+    const pct = Math.round((expense / goal) * 100);
+    const remain = goal - expense;
+    status.textContent = remain >= 0 ? `잔여 ${fmt(remain)}원 (${pct}%)` : `초과 ${fmt(-remain)}원`;
+    status.className = 'goal-remaining ' + (remain >= 0 ? 'ok' : 'over');
+    progress.style.width = Math.min(pct, 100) + '%';
+    progress.className = 'progress-fill ' + (pct < 70 ? 'ok' : pct < 90 ? 'warn' : 'over');
+  }
+}
 
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[ch]));
+}
+
+function parseLocalDate(value) {
+  const m = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+}
+
+function getFilteredTransactions() {
+  const txs = window._allTransactions || [];
+  const search = (document.getElementById('txSearch')?.value || '').trim().toLowerCase();
+  const cat = document.getElementById('txCategoryFilter')?.value || '';
+  return txs.filter(tx => {
+    if (txTypeFilter !== '전체' && tx.type !== txTypeFilter) return false;
+    if (cat && tx.category !== cat) return false;
+    if (search && !`${tx.category || ''} ${tx.memo || ''} ${tx.type || ''}`.toLowerCase().includes(search)) return false;
+    return true;
+  }).sort((a,b) => parseLocalDate(b.date) - parseLocalDate(a.date));
+}
+
+function applyTxFilters() { renderTransactions(getFilteredTransactions()); }
+
+function setTxTypeFilter(type) {
+  txTypeFilter = type;
+  ['전체','지출','수입'].forEach(t => {
+    const id = t === '전체' ? 'filterAll' : t === '지출' ? 'filterExpense' : 'filterIncome';
+    document.getElementById(id)?.classList.toggle('active', t === type);
+  });
+  applyTxFilters();
+}
+
+function updateCategoryFilter() {
+  const select = document.getElementById('txCategoryFilter');
+  if (!select) return;
+  const current = select.value;
+  const names = [...new Set((window._allTransactions || []).map(t => t.category).filter(Boolean))].sort();
+  select.innerHTML = '<option value="">모든 카테고리</option>' +
+    names.map(n => `<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`).join('');
+  if (names.includes(current)) select.value = current;
 }
 
 function renderTransactions(txs) {
@@ -956,18 +1067,14 @@ function renderTransactions(txs) {
   if (!txs.length) {
     el.innerHTML = `<div class="empty-state">
       <div class="empty-icon">💸</div>
-      <div class="empty-text">이번 달 거래 내역이 없어요</div>
+      <div class="empty-text">${(window._allTransactions || []).length ? '검색 조건에 맞는 내역이 없어요' : '이번 달 거래 내역이 없어요'}</div>
     </div>`;
     return;
   }
 
-  const catMap = {};
-  categories.forEach(c => { catMap[c.name] = String(c.icon || ''); });
-
-  // 날짜별 그룹
   const groups = {};
   txs.forEach(tx => {
-    const d = new Date(tx.date);
+    const d = parseLocalDate(tx.date);
     const key = `${d.getMonth()+1}월 ${d.getDate()}일`;
     if (!groups[key]) groups[key] = [];
     groups[key].push(tx);
@@ -975,28 +1082,26 @@ function renderTransactions(txs) {
 
   let html = '';
   Object.entries(groups).forEach(([date, items]) => {
-    html += `<div class="section-title" style="margin-top:8px;margin-bottom:6px;">${date}</div>`;
+    html += `<div class="section-title" style="margin-top:8px;margin-bottom:6px;">${escapeHTML(date)}</div>`;
     items.forEach(tx => {
       const isIncome = tx.type === '수입';
-      const icon = '';
-      const txJson = JSON.stringify(tx).replace(/'/g, '&#39;');
+      const icon = categories.find(c => c.name === tx.category)?.icon || (isIncome ? '💰' : '💳');
+      const idArg = encodeURIComponent(String(tx.id));
       html += `
-        <div class="tx-item" onclick="openEditModal('${tx.id}')" style="cursor:pointer;">
+        <div class="tx-item" onclick="openEditModal(decodeURIComponent('${idArg}'))" style="cursor:pointer;">
+          <div class="tx-icon">${escapeHTML(icon)}</div>
           <div class="tx-info">
-            <div class="tx-category">${tx.category}</div>
-            <div class="tx-meta">${tx.memo || tx.type}</div>
+            <div class="tx-category">${escapeHTML(tx.category)}</div>
+            <div class="tx-meta">${escapeHTML(tx.memo || tx.type)}</div>
           </div>
           <div class="tx-right">
-            <div class="tx-amount ${isIncome ? 'income' : 'expense'}">
-              ${isIncome ? '+' : '-'}${fmt(tx.amount)}원
-            </div>
-            <div class="tx-date" style="font-size:10px;color:var(--text3);margin-top:2px;">✏️ 탭하여 수정</div>
+            <div class="tx-amount ${isIncome ? 'income' : 'expense'}">${isIncome ? '+' : '-'}${fmt(tx.amount)}원</div>
+            <div class="tx-date">✏️ 탭하여 수정</div>
           </div>
-          <button class="tx-delete" onclick="event.stopPropagation();deleteItem('${tx.id}')">✕</button>
+          <button class="tx-delete" onclick="event.stopPropagation();deleteItem(decodeURIComponent('${idArg}'))">✕</button>
         </div>`;
     });
   });
-
   el.innerHTML = html;
 }
 
@@ -1183,14 +1288,14 @@ function openEditModal(id) {
 
   editingTx = tx;
   editSelectedType = tx.type;
-  editSelectedCategory = tx.category;
 
-  document.getElementById('editDate').value = tx.date;
+  document.getElementById('editDate').value = String(tx.date).slice(0, 10);
   document.getElementById('editAmount').value = tx.amount;
   document.getElementById('editMemo').value = tx.memo || '';
 
-  // 타입 버튼
   setEditType(tx.type);
+  editSelectedCategory = tx.category;
+  renderEditCatGrid();
 
   document.getElementById('editModal').classList.remove('hidden');
 }
@@ -1214,7 +1319,7 @@ function renderEditCatGrid() {
   const filtered = categories.filter(c => c.type === editSelectedType);
   grid.innerHTML = filtered.map(c => `
     <button class="cat-pick-btn ${editSelectedCategory === c.name ? 'selected' : ''}"
-      onclick="editSelectCategory('${c.name}')">
+      onclick="editSelectCategory(decodeURIComponent('${encodeURIComponent(c.name)}'))">
       <span class="cat-pick-name">${c.name}</span>
     </button>
   `).join('');
@@ -1288,6 +1393,40 @@ async function saveGoal() {
       loadSummary();
     }
   } catch(e) { showToast('저장 실패'); }
+}
+
+// ── 편의 기능 ─────────────────────────────────────────────────
+function resetListFilters() {
+  txTypeFilter = '전체';
+  const search = document.getElementById('txSearch');
+  const cat = document.getElementById('txCategoryFilter');
+  if (search) search.value = '';
+  if (cat) cat.value = '';
+  ['filterAll','filterExpense','filterIncome'].forEach(id =>
+    document.getElementById(id)?.classList.remove('active'));
+  document.getElementById('filterAll')?.classList.add('active');
+}
+
+function exportCurrentMonthCSV() {
+  const txs = getFilteredTransactions();
+  if (!txs.length) { showToast('내보낼 내역이 없습니다'); return; }
+  const rows = [
+    ['날짜','구분','카테고리','금액','메모'],
+    ...txs.map(t => [t.date, t.type, t.category, Number(t.amount) || 0, t.memo || ''])
+  ];
+  const csv = '\\uFEFF' + rows.map(row =>
+    row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
+  ).join('\\r\\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `가계부_${currentYM}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('CSV 파일을 만들었습니다');
 }
 
 // ── Toast ─────────────────────────────────────────────────────
